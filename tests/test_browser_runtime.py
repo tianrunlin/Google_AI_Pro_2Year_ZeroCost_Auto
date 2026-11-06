@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import automation_engine as engine
+from auth_guard import ManualLoginRequired
 from browser_runtime import ensure_debug_port_available, find_chrome_path
 
 
@@ -52,6 +53,25 @@ class BrowserRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await instance.run_pipeline(start_step=5)
         stop.assert_called_once_with(launch.return_value)
         self.assertEqual(states[-1]["status"], "error")
+
+    @unittest.skipUnless(find_chrome_path(), "Chrome is not installed")
+    async def test_manual_login_stops_pipeline_and_cleans_up(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        instance, states = self.automator(port)
+        # Synthetic data only; all Google/checkout steps below are replaced.
+        instance.card = {"number": "0" * 16, "exp_month": "01", "exp_year": "99", "cvc": "000"}
+        with tempfile.TemporaryDirectory(prefix="chrome-runtime-test-") as profile:
+            with patch.object(engine, "get_profile_dir", return_value=profile), \
+                 patch.object(instance, "verify_ip_environment", new=AsyncMock()), \
+                 patch.object(instance, "step1_login", new=AsyncMock(side_effect=ManualLoginRequired("manual login"))), \
+                 patch.object(instance, "step2_layer1_12m", new=AsyncMock()) as checkout, \
+                 patch.dict(os.environ, {"CHROME_HEADLESS": "1"}):
+                await instance.run_pipeline()
+            checkout.assert_not_awaited()
+            self.assertEqual(states[-1]["status"], "needs_login")
+            self.assertIsNotNone(instance.proc.poll())
 
     @unittest.skipUnless(find_chrome_path(), "Chrome is not installed")
     async def test_real_headless_chrome_pipeline_and_cleanup(self):

@@ -24,6 +24,9 @@
 自动执行默认使用独立配置目录的无头 Chrome，不会打开窗口或连接日常浏览器。
 如需亲自查看自动执行过程，可在自己的终端运行 `CHROME_HEADLESS=0 ./start-macos.command`。
 网页中的“打开浏览器”按钮则会按用户操作打开该账号的独立 Chrome 窗口。
+如遇 `signin/rejected`、身份无法验证或人机验证，任务会停止并显示“需要手动登录”，不会当作登录成功继续执行。
+点击账号行的“浏览器”按钮，亲自完成登录和安全验证；关闭该账号的独立窗口，再从 Step 1 重试。
+Google 仍拒绝登录时，需要按页面提示处理；程序不会绕过安全验证。
 自定义 Chrome 位置：`CHROME_PATH='/完整路径/Google Chrome' ./start-macos.command`。
 本项目通过 CDP 连接本机安装的 Chrome，无需额外执行 `playwright install`。
 

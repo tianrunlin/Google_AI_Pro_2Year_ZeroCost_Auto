@@ -63,7 +63,7 @@ async def wait_for_chrome(proc: subprocess.Popen, port: int, timeout: float = 20
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(f"Chrome 启动失败，退出码: {proc.returncode}")
+            raise RuntimeError(f"Chrome 启动失败，退出码: {proc.returncode}；请先关闭该账号的独立 Chrome 窗口再重试")
         try:
             if await asyncio.to_thread(probe):
                 return

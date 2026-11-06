@@ -606,6 +606,7 @@
         pending: ['status-pending', '⏳ 待执行'],
         running: ['status-running', '⚡ 执行中'],
         waiting_human: ['status-waiting_human', '🖐️ 等点人机验证'],
+        needs_login: ['status-waiting_human', '🖐️ 需要手动登录'],
         completed: ['status-completed', '✅ 已完成'],
         error: ['status-error', '❌ 异常中断'],
         stopped: ['status-pending', '⏹ 已停止']
@@ -870,13 +871,18 @@
     }
 
     async function openBrowser(accountId) {
-      openedBrowserMap[accountId] = true;
-      fetchState();
-      await fetch('/api/open_browser', {
+      const res = await fetch('/api/open_browser', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ account_id: accountId })
       });
+      if (!res.ok) {
+        const error = await res.json();
+        alert(error.detail || '打开独立浏览器失败');
+        return;
+      }
+      openedBrowserMap[accountId] = true;
+      fetchState();
       setTimeout(() => {
         delete openedBrowserMap[accountId];
         fetchState();

@@ -12,6 +12,7 @@ import urllib.parse
 import time
 from typing import Callable, Dict, Any, Optional
 from playwright.async_api import async_playwright
+from auth_guard import ManualLoginRequired, MANUAL_LOGIN_HELP, is_google_auth_page, login_block_reason
 
 from browser_runtime import (
     find_chrome_path as _find_chrome_path,
@@ -560,6 +561,16 @@ class GoogleUltraAutomator:
             await asyncio.sleep(rem + 1)
         return get_totp(secret)
 
+    async def require_authenticated_session(self, page):
+        if page.is_closed() or is_google_auth_page(page.url):
+            raise ManualLoginRequired("Google 登录尚未完成。" + MANUAL_LOGIN_HELP)
+        if urllib.parse.urlparse(page.url).hostname != "one.google.com":
+            raise ManualLoginRequired("未返回 Google One，无法确认登录成功。" + MANUAL_LOGIN_HELP)
+        cookies = await page.context.cookies(["https://accounts.google.com", "https://one.google.com"])
+        session_names = {"SID", "__Secure-1PSID", "__Secure-3PSID"}
+        if not any(cookie["name"] in session_names and cookie.get("value") for cookie in cookies):
+            raise ManualLoginRequired("未检测到 Google 登录会话，不能继续执行。" + MANUAL_LOGIN_HELP)
+
     async def pass_reauth_on_page(self, page_obj):
         """Automatically handle Google email + password + 2FA TOTP re-authentication prompts."""
         email = self.account.get("email", "")
@@ -567,12 +578,16 @@ class GoogleUltraAutomator:
         for _ in range(16):
             self.check_stop()
             if page_obj.is_closed():
-                return
+                raise ManualLoginRequired("登录窗口已关闭，无法确认验证结果。" + MANUAL_LOGIN_HELP)
             try:
                 body = await page_obj.inner_text("body", timeout=3000)
             except Exception:
                 await asyncio.sleep(1.5)
                 continue
+
+            blocked = login_block_reason(page_obj.url, body)
+            if blocked:
+                raise ManualLoginRequired(blocked + MANUAL_LOGIN_HELP)
 
             if "gds.google.com" in page_obj.url or "recoveryoptions" in page_obj.url or "确保您始终都能登录" in body:
                 self.log("检测到 gds.google.com 辅助信息提示页，正在点击【取消/跳过】完成登录跳转...")
@@ -654,20 +669,6 @@ class GoogleUltraAutomator:
                 await asyncio.sleep(4.5)
                 continue
 
-            if "challenge/recaptcha" in page_obj.url or "证明您不是自动程序" in body or "not a robot" in body:
-                for fr in page_obj.frames:
-                    if "recaptcha" in (fr.url or "") and "anchor" in (fr.url or ""):
-                        try:
-                            cb = fr.locator("#recaptcha-anchor")
-                            if await cb.count() > 0:
-                                self.log("检测到登录人机验证框 (challenge/recaptcha)，正在自动勾选...")
-                                await cb.click()
-                                await asyncio.sleep(4.5)
-                                break
-                        except Exception:
-                            pass
-                continue
-
             # Check if an open dialog modal (VfPpkd-Sx9Kwc-OWXEXe-FNFY6c) is shown on top of the page
             open_dialog_btn = page_obj.locator('div.VfPpkd-Sx9Kwc-OWXEXe-FNFY6c button, div.VfPpkd-Sx9Kwc-OWXEXe-FNFY6c [role="button"], div[role="dialog"] button, div[role="dialog"] [role="button"]')
             if await open_dialog_btn.count() > 0:
@@ -719,15 +720,11 @@ class GoogleUltraAutomator:
                     await asyncio.sleep(3.5)
                     continue
 
-            if "Add 2-Step Verification" in body or "We couldn’t verify it’s you" in body or "We couldn't verify it's you" in body or "signin/rejected" in page_obj.url:
-                self.log("ℹ️ 检测到新设备安全拦截页 (Add 2-Step Verification / signin/rejected)，跳过独立验证页...")
-                return
-
             totp = page_obj.locator('input[type="tel"], input#totpPin, input[name="totpPin"]')
             if await totp.count() > 0 and await totp.first.is_visible():
                 code = await self.ensure_totp_fresh()
                 if code:
-                    self.log(f"正在自动填入 2FA 动态验证码: {code}")
+                    self.log("正在填入 2FA 动态验证码（不记录验证码内容）")
                     try:
                         await totp.first.fill(code)
                         next_btn = page_obj.locator('#totpNext, button:has-text("下一步"), button:has-text("Next")').first
@@ -745,6 +742,9 @@ class GoogleUltraAutomator:
                 continue
 
             break
+
+        if is_google_auth_page(page_obj.url) or page_obj.url == "about:blank":
+            raise ManualLoginRequired("登录验证尚未完成或已超时。" + MANUAL_LOGIN_HELP)
 
     async def step1_login(self, page):
         self.update_state(status="running", current_step=1, step_message="Step 1/5: 正在登录 Google 账号并自动过验证 (辅助邮箱 / 2FA)...")
@@ -841,6 +841,7 @@ class GoogleUltraAutomator:
                 )
                 await asyncio.sleep(3.5)
 
+        await self.require_authenticated_session(page)
         await self.save_screenshot(page, "step1_done")
         self.log(f"✅ Step 1 完成，当前页面: {page.url[:80]}")
 
@@ -1768,6 +1769,9 @@ class GoogleUltraAutomator:
                     await step_fn()
 
                 await browser.close()
+        except ManualLoginRequired as e:
+            self.log(f"🖐️ 已停止执行：{e}")
+            self.update_state(status="needs_login", step_message=str(e))
         except Exception as e:
             err_msg = str(e)
             self.log(f"❌ 执行中断: {err_msg}")

@@ -474,6 +474,10 @@ def _launch_on_interactive_desktop(args: List[str]):
 
 @app.post("/api/open_browser")
 async def open_browser_manual(req: AccountActionReq):
+    if req.account_id in ACTIVE_TASKS:
+        raise HTTPException(status_code=409, detail="请先停止该账号的任务，等待浏览器退出后再手动登录")
+    if not CHROME_PATH or not os.path.isfile(CHROME_PATH):
+        raise HTTPException(status_code=400, detail="找不到 Chrome，请安装 Google Chrome 或设置 CHROME_PATH")
     cfg = load_config()
     target_acc = next((a for a in cfg.get("accounts", []) if a["id"] == req.account_id), None)
     if not target_acc:
@@ -519,7 +523,10 @@ async def open_browser_manual(req: AccountActionReq):
             "https://play.google.com/store/account/orderhistory?hl=zh-CN",
         ]
     )
-    _launch_on_interactive_desktop(chrome_args)
+    try:
+        _launch_on_interactive_desktop(chrome_args)
+    except OSError:
+        raise HTTPException(status_code=500, detail="无法启动独立 Chrome，请检查路径和权限")
     append_log(
         f"[{time.strftime('%H:%M:%S')}] [BROWSER] 🌐 已为您手动打开 [{target_acc['id']}] ({target_acc['email']}) 的专属 Chrome 窗口"
     )
