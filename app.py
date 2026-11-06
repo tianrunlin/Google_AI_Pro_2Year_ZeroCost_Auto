@@ -41,14 +41,15 @@ STOP_BATCH: bool = False
 
 
 def load_config() -> Dict[str, Any]:
-    if not os.path.exists(CONFIG_PATH):
+    config_path = CONFIG_PATH if os.path.exists(CONFIG_PATH) else os.path.join(BASE_DIR, "config.example.json")
+    if not os.path.exists(config_path):
         return {"target_region": "US", "target_plan": "pro_2year_zero", "auto_cancel": True, "card": {}, "accounts": []}
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def save_config(cfg: Dict[str, Any]):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    with open(CONFIG_PATH, "w", encoding="utf-8", opener=lambda path, flags: os.open(path, flags, 0o600)) as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
@@ -468,7 +469,7 @@ def _launch_on_interactive_desktop(args: List[str]):
                 return
         except Exception:
             pass
-    subprocess.Popen(args)
+    subprocess.Popen(args, start_new_session=os.name != "nt")
 
 
 @app.post("/api/open_browser")

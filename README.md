@@ -3,17 +3,45 @@
 ========================================================================
 
 【一、运行环境要求】
-1. Windows 10 / 11 系统
+1. macOS（Apple Silicon / Intel）或 Windows 10 / 11 系统
 2. 已安装 Google Chrome 浏览器（默认路径即可）
 3. 已安装 Python 3.10 或更高版本（安装时勾选 Add Python to PATH）
 4. 网络环境：本机开启美区（US）代理，或在控制台左侧填写代理模板
 
-【二、快速启动步骤】
+【二、macOS 启动】
+
+安装 Python 3.10+ 和 Google Chrome 后，在项目目录运行：
+
+```bash
+./start-macos.command
+```
+
+也可以在 Finder 中双击 `start-macos.command`。首次运行会创建 `.venv`、安装依赖，并从 `config.example.json` 生成本地配置。
+启动后自行打开 http://127.0.0.1:8765；按 Ctrl+C 停止服务器。
+如果系统默认 Python 版本不适用，可运行 `PYTHON_BIN=python3.13 ./start-macos.command`（仅创建虚拟环境时使用）。
+升级依赖：`INSTALL_DEPS=1 ./start-macos.command`。
+
+自动执行默认使用独立配置目录的无头 Chrome，不会打开窗口或连接日常浏览器。
+如需亲自查看自动执行过程，可在自己的终端运行 `CHROME_HEADLESS=0 ./start-macos.command`。
+网页中的“打开浏览器”按钮则会按用户操作打开该账号的独立 Chrome 窗口。
+自定义 Chrome 位置：`CHROME_PATH='/完整路径/Google Chrome' ./start-macos.command`。
+本项目通过 CDP 连接本机安装的 Chrome，无需额外执行 `playwright install`。
+
+`config.json`（账号、密码、2FA、卡信息）、`profiles/`（登录会话）、`screenshots/`、`logs/` 均属于本地数据，已排除版本控制；请勿上传或分享。
+平台适配仅验证控制台及浏览器生命周期，不保证优惠可用、实际费用或订阅结果。
+
+验证命令（只使用本地测试页面，不登录 Google 或提交付款）：
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+【三、Windows 快速启动步骤】
 1. 首次使用请双击运行：【1_首次运行_安装依赖并启动.bat】
 2. 之后日常使用直接双击：【2_启动控制台.bat】
 3. 浏览器会自动打开控制台页面：http://127.0.0.1:8765
 
-【三、自定义填写支付卡 & 跑号说明】
+【四、自定义填写支付卡 & 跑号说明】
 1. 填写支付卡（必填）：
    - 在网页左侧【全局配置与内联免税绑卡】区域，填入你自己的 Visa 或 Mastercard 外币卡：
      * 卡号（16位数字）

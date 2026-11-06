@@ -13,17 +13,13 @@ import time
 from typing import Callable, Dict, Any, Optional
 from playwright.async_api import async_playwright
 
-def _find_chrome_path() -> str:
-    candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return p
-    return candidates[0]
-
+from browser_runtime import (
+    find_chrome_path as _find_chrome_path,
+    ensure_debug_port_available,
+    launch_chrome,
+    wait_for_chrome,
+    stop_chrome,
+)
 
 CHROME_PATH = _find_chrome_path()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1722,39 +1718,31 @@ class GoogleUltraAutomator:
             "--start-maximized",
         ]
 
-        if parsed_proxy:
-            if parsed_proxy.get("username"):
-                bridge_port = self.port + 200
-                self.proxy_bridge = LocalHttpProxyAuthBridge(bridge_port, parsed_proxy)
-                await self.proxy_bridge.start()
-                chrome_args.append(f"--proxy-server=http://127.0.0.1:{bridge_port}")
-                self.log(
-                    f"🛡️ 已为 [{self.account['id']}] 挂载专属住宅代理隧道 -> {parsed_proxy['host']}:{parsed_proxy['port']} (会话: {parsed_proxy['username'][:28]}...)"
-                )
+        try:
+            if parsed_proxy:
+                if parsed_proxy.get("username"):
+                    bridge_port = self.port + 200
+                    self.proxy_bridge = LocalHttpProxyAuthBridge(bridge_port, parsed_proxy)
+                    await self.proxy_bridge.start()
+                    chrome_args.append(f"--proxy-server=http://127.0.0.1:{bridge_port}")
+                    self.log(
+                        f"🛡️ 已为 [{self.account['id']}] 挂载专属住宅代理隧道 -> {parsed_proxy['host']}:{parsed_proxy['port']} (会话: {parsed_proxy['username'][:28]}...)"
+                    )
+                else:
+                    p_url = f"{parsed_proxy['scheme']}://{parsed_proxy['host']}:{parsed_proxy['port']}"
+                    chrome_args.append(f"--proxy-server={p_url}")
+                    self.log(f"🛡️ 已为 [{self.account['id']}] 挂载专属代理 -> {p_url}")
             else:
-                p_url = f"{parsed_proxy['scheme']}://{parsed_proxy['host']}:{parsed_proxy['port']}"
-                chrome_args.append(f"--proxy-server={p_url}")
-                self.log(f"🛡️ 已为 [{self.account['id']}] 挂载专属代理 -> {p_url}")
-        else:
-            self.log(f"正在启动 Chrome 独立环境 (端口: {self.port}, 未配置独立代理，使用系统当前网络)...")
+                self.log(f"正在启动 Chrome 独立环境 (端口: {self.port}, 未配置独立代理，使用系统当前网络)...")
 
-        chrome_args.append("about:blank")
+            chrome_args.append("about:blank")
 
-        # Cleanly kill any lingering process listening on self.port
-        try:
-            net_out = subprocess.check_output(f"netstat -ano | findstr :{self.port}", shell=True).decode("gbk", errors="ignore")
-            for line in net_out.splitlines():
-                if "LISTENING" in line:
-                    old_pid = line.strip().split()[-1]
-                    subprocess.run(f"taskkill /F /T /PID {old_pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
-        await asyncio.sleep(0.8)
+            if os.environ.get("CHROME_HEADLESS", "1").lower() not in ("0", "false", "no"):
+                chrome_args.insert(1, "--headless=new")
 
-        self.proc = subprocess.Popen(chrome_args)
-        await asyncio.sleep(2.8)
-
-        try:
+            ensure_debug_port_available(self.port)
+            self.proc = launch_chrome(chrome_args)
+            await wait_for_chrome(self.proc, self.port)
             async with async_playwright() as p:
                 browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{self.port}")
                 context = browser.contexts[0]
@@ -1785,10 +1773,12 @@ class GoogleUltraAutomator:
             self.log(f"❌ 执行中断: {err_msg}")
             self.update_state(status="error", step_message=f"❌ 步骤 {self.account.get('current_step', 1)} 异常: {err_msg[:120]}")
         finally:
-            if self.proxy_bridge:
-                await self.proxy_bridge.stop()
-            if self.proc:
-                try:
-                    subprocess.run(f"taskkill /F /T /PID {self.proc.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                except Exception:
-                    pass
+            try:
+                if self.proxy_bridge:
+                    await self.proxy_bridge.stop()
+            finally:
+                if self.proc:
+                    try:
+                        await asyncio.to_thread(stop_chrome, self.proc)
+                    except Exception as cleanup_error:
+                        self.log(f"⚠️ Chrome 清理失败: {cleanup_error}")
