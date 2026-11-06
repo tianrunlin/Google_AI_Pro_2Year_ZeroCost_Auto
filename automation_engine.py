@@ -13,6 +13,7 @@ import time
 from typing import Callable, Dict, Any, Optional
 from playwright.async_api import async_playwright
 from auth_guard import ManualLoginRequired, MANUAL_LOGIN_HELP, is_google_auth_page, login_block_reason
+from checkout_errors import CheckoutUnavailable, checkout_unavailable_reason
 
 from browser_runtime import (
     find_chrome_path as _find_chrome_path,
@@ -909,6 +910,18 @@ class GoogleUltraAutomator:
                     await ok_btn.click(force=True)
                     await asyncio.sleep(2.0)
 
+    async def raise_for_checkout_refusal(self, page):
+        # Read rendered text only; do not click through or bypass a refusal.
+        try:
+            body = await page.inner_text("body", timeout=1500)
+        except Exception:
+            return
+        reason = checkout_unavailable_reason(body)
+        if reason:
+            self.last_subscribe_error = reason
+            await self.save_screenshot(page, "checkout_unavailable")
+            raise CheckoutUnavailable(reason)
+
     async def _poll_eacquire_modal(self, page, max_loops: int = 55, step_tag: str = ""):
         last_confirm_click_ts = 0.0
         loops_left = max_loops
@@ -916,6 +929,7 @@ class GoogleUltraAutomator:
         while loops_left > 0:
             loops_left -= 1
             self.check_stop()
+            await self.raise_for_checkout_refusal(page)
             if "accounts.google.com" in page.url or "gds.google.com" in page.url:
                 self.log(f"[{step_tag or 'modal'}] 检测到跳转到登录验证页 ({page.url[:60]})，正在自动完成身份验证...")
                 await self.pass_reauth_on_page(page)
@@ -1165,7 +1179,9 @@ class GoogleUltraAutomator:
         await self.save_screenshot(page, f"{step_tag}_modal")
 
         if not target_fr:
-            self.log(f"⚠️ [{step_tag}] 未检测到 Google Play 结账弹窗 (eacquire/multiline)")
+            await self.raise_for_checkout_refusal(page)
+            self.last_subscribe_error = "等待 Google Play 结账弹窗超时；当前页面未出现可确认的结账表单，请查看截图中的提示"
+            self.log(f"⚠️ [{step_tag}] {self.last_subscribe_error}")
             return False
 
         self.log(f"[{step_tag}] 结账弹窗内容: {clean_txt[:350]}")
@@ -1769,6 +1785,9 @@ class GoogleUltraAutomator:
                     await step_fn()
 
                 await browser.close()
+        except CheckoutUnavailable as e:
+            self.log(f"❌ 已停止执行：{e}")
+            self.update_state(status="error", step_message=str(e))
         except ManualLoginRequired as e:
             self.log(f"🖐️ 已停止执行：{e}")
             self.update_state(status="needs_login", step_message=str(e))
